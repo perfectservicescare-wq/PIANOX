@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>PIANOX // Ultimate Creative Piano</title>
+    <style>
+        :root { --neon: #00f2ff; --pink: #ff0077; --bg: #0a0a0c; }
+        body { background: var(--bg); color: white; font-family: 'Orbitron', sans-serif; overflow: hidden; margin: 0; }
+        
+        /* Game HUD */
+        #hud { position: absolute; top: 20px; left: 20px; text-align: left; pointer-events: none; z-index: 10; }
+        .stat-label { color: var(--neon); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 2px; }
+        .stat-value { font-size: 2rem; margin-bottom: 10px; text-shadow: 0 0 10px var(--neon); }
+
+        /* Controls */
+        #top-bar { position: absolute; top: 20px; right: 20px; display: flex; gap: 10px; z-index: 10; }
+        .btn { background: rgba(255,255,255,0.1); border: 1px solid var(--neon); color: white; padding: 10px 15px; cursor: pointer; border-radius: 4px; transition: 0.3s; }
+        .btn:hover { background: var(--neon); color: black; box-shadow: 0 0 20px var(--neon); }
+        .btn.active { background: var(--pink); border-color: var(--pink); box-shadow: 0 0 20px var(--pink); }
+
+        /* Piano */
+        #piano-container { position: absolute; bottom: 0; width: 100%; height: 250px; display: flex; justify-content: center; background: rgba(0,0,0,0.5); padding-bottom: 20px; }
+        .key { width: 50px; height: 180px; background: white; border: 1px solid #111; border-radius: 0 0 8px 8px; position: relative; transition: 0.1s; cursor: pointer; }
+        .key.black { width: 34px; height: 110px; background: #222; margin-left: -17px; margin-right: -17px; z-index: 2; border-color: #000; }
+        .key.active { transform: translateY(8px); background: var(--neon); box-shadow: 0 0 30px var(--neon); }
+
+        /* Visualizer Canvas */
+        #canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
+    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+    <canvas id="canvas"></canvas>
+
+    <div id="hud">
+        <div class="stat-label">Score</div>
+        <div id="score" class="stat-value">000000</div>
+        <div class="stat-label">Rank</div>
+        <div id="rank" class="stat-value" style="color: var(--pink); text-shadow: 0 0 10px var(--pink);">NOVICE</div>
+    </div>
+
+    <div id="top-bar">
+        <input type="file" id="upload" style="display:none" accept="audio/*">
+        <button class="btn" onclick="document.getElementById('upload').click()">+ LOAD TRACK</button>
+        <button id="alphabet-btn" class="btn" onclick="toggleAlphabet()">ALPHABET MODE: OFF</button>
+        <button class="btn" onmousedown="applyFilter(true)" onmouseup="applyFilter(false)">FX: MUFFLE</button>
+    </div>
+
+    <div id="piano-container" id="piano"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+
+    <script>
+        /**
+         * PIANOX ENGINE
+         */
+        
+        // 1. AUDIO SETUP
+        const filter = new Tone.Filter(20000, "lowpass").toDestination();
+        const delay = new Tone.FeedbackDelay("8n", 0.4).connect(filter);
+        const synth = new Tone.PolySynth(Tone.Synth).connect(delay);
+        let player = null;
+        
+        // 2. STATE & SCORING
+        let score = 0;
+        let alphabetMode = false;
+        const ranks = ["NOVICE", "AMATEUR", "PRO", "VIRTUOSO", "PIANO GOD"];
+
+        // 3. PIANO UI GENERATION
+        const notes = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+        const keyMap = {};
+        const container = document.getElementById('piano-container');
+
+        for (let i = 0; i < 24; i++) {
+            const note = notes[i % 12];
+            const octave = Math.floor(i / 12) + 3;
+            const fullNote = note + octave;
+            const key = document.createElement('div');
+            key.className = `key ${note.includes('#') ? 'black' : ''}`;
+            key.dataset.note = fullNote;
+            key.onmousedown = () => playNote(fullNote);
+            container.appendChild(key);
+            keyMap[fullNote] = key;
+        }
+
+        // 4. CORE FUNCTIONS
+        function playNote(note) {
+            if (Tone.context.state !== 'running') Tone.start();
+            
+            synth.triggerAttackRelease(note, "8n");
+            triggerVisuals(note);
+            
+            score += 15;
+            document.getElementById('score').innerText = score.toString().padStart(6, '0');
+            checkRank();
+        }
+
+        function triggerVisuals(note) {
+            const el = keyMap[note];
+            if (el) {
+                el.classList.add('active');
+                setTimeout(() => el.classList.remove('active'), 150);
+                createParticles(el.offsetLeft + (el.offsetWidth/2));
+            }
+        }
+
+        function checkRank() {
+            const rankIndex = Math.min(Math.floor(score / 1000), ranks.length - 1);
+            document.getElementById('rank').innerText = ranks[rankIndex];
+        }
+
+        // 5. ALPHABET MODE (Typing A-Z)
+        function toggleAlphabet() {
+            alphabetMode = !alphabetMode;
+            const btn = document.getElementById('alphabet-btn');
+            btn.innerText = `ALPHABET MODE: ${alphabetMode ? 'ON' : 'OFF'}`;
+            btn.classList.toggle('active');
+        }
+
+        window.addEventListener('keydown', (e) => {
+            if (alphabetMode) {
+                const key = e.key.toUpperCase();
+                const code = key.charCodeAt(0);
+                if (code >= 65 && code <= 90) {
+                    // Logic: Triggers a Major chord based on letter
+                    const root = Tone.Frequency(60 + (code % 12), "midi");
+                    const chord = [root, root.transpose(4), root.transpose(7)];
+                    synth.triggerAttackRelease(chord, "4n");
+                    chord.forEach(n => triggerVisuals(n.toNote()));
+                    score += 50;
+                }
+            }
+        });
+
+        // 6. MIDI CONNECTIVITY
+        if (navigator.requestMIDIAccess) {
+            navigator.requestMIDIAccess().then(midi => {
+                for (let input of midi.inputs.values()) {
+                    input.onmidimessage = (msg) => {
+                        const [s, n, v] = msg.data;
+                        if (s === 144 && v > 0) playNote(Tone.Frequency(n, "midi").toNote());
+                    };
+                }
+            });
+        }
+
+        // 7. MP3 REMIXING
+        document.getElementById('upload').addEventListener('change', async (e) => {
+            const url = URL.createObjectURL(e.target.files[0]);
+            if (player) player.dispose();
+            player = new Tone.Player(url).connect(filter);
+            await Tone.loaded();
+            player.start();
+        });
+
+        function applyFilter(on) {
+            filter.frequency.rampTo(on ? 400 : 20000, 0.5);
+        }
+
+        // 8. PARTICLE SYSTEM (Canvas)
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        let particles = [];
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        class Particle {
+            constructor(x) {
+                this.x = x;
+                this.y = window.innerHeight - 200;
+                this.vx = (Math.random() - 0.5) * 10;
+                this.vy = -Math.random() * 15 - 5;
+                this.alpha = 1;
+                this.color = Math.random() > 0.5 ? '#00f2ff' : '#ff0077';
+            }
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.vy += 0.5; // Gravity
+                this.alpha -= 0.02;
+            }
+            draw() {
+                ctx.globalAlpha = this.alpha;
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, 4, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        function createParticles(x) {
+            for (let i = 0; i < 10; i++) particles.push(new Particle(x));
+        }
+
+        function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            particles = particles.filter(p => p.alpha > 0);
+            particles.forEach(p => {
+                p.update();
+                p.draw();
+            });
+            requestAnimationFrame(animate);
+        }
+        animate();
+
+    </script>
+</body>
+</html>
